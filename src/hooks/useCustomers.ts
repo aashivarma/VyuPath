@@ -1,42 +1,50 @@
-
-import { useState, useEffect } from 'react';
-import { supabase } from '@/integrations/supabase/client';
-import { Customer } from '@/types/user';
+import { useEffect, useState } from "react";
+import { Customer } from "@/types/user";
 
 export const useCustomers = () => {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetchCustomers = async () => {
-      try {
-        setLoading(true);
-        console.log('Fetching customers...');
-        
-        const { data, error } = await supabase
-          .from('customers')
-          .select('*')
-          .order('created_at', { ascending: false });
+  const fetchCustomers = async () => {
+    try {
+      setLoading(true);
+      setError(null);
 
-        if (error) {
-          console.error('Error fetching customers:', error);
-          throw error;
-        }
-        
-        console.log('Customers fetched successfully:', data?.length || 0);
-        setCustomers(data || []);
-        setError(null);
-      } catch (err: any) {
-        console.error('Customer fetch error:', err);
-        setError(err.message);
-      } finally {
-        setLoading(false);
+      const token = localStorage.getItem("token");
+      if (!token) {
+        throw new Error("Not authenticated");
       }
-    };
 
+      const res = await fetch("http://localhost:5000/customers", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (!res.ok) {
+        throw new Error("Failed to fetch customers");
+      }
+
+      const data = await res.json();
+      setCustomers(data);
+    } catch (err: any) {
+      console.error("Customer fetch error:", err);
+      setError(err.message || "Failed to load customers");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
     fetchCustomers();
   }, []);
 
-  return { customers, loading, error, refetch: () => window.location.reload() };
+  return {
+    customers,
+    loading,
+    error,
+    refetch: fetchCustomers,
+  };
 };

@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { useSamples, usePricingTiers } from "../../../hooks/useSupabaseData";
+import { useSamples, usePricingTiers } from "../../../hooks/useApiData";
 import { useAuth } from "../../../hooks/useAuth";
 import StatsCards from "../StatsCards";
 import { Upload, Download, FileText, CreditCard, Loader2 } from "lucide-react";

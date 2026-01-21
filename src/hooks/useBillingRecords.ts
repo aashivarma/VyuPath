@@ -1,15 +1,13 @@
-
-import { useState, useEffect } from 'react';
-import { supabase } from '@/integrations/supabase/client';
+import { useEffect, useState } from "react";
 
 interface BillingRecord {
   id: string;
   sample_id: string;
   customer_id: string;
-  test_type: 'LBC' | 'HPV' | 'Co-test';
+  test_type: "LBC" | "HPV" | "Co-test";
   amount: number;
   billing_date: string;
-  payment_status: 'pending' | 'paid' | 'overdue';
+  payment_status: "pending" | "paid" | "overdue";
   created_at: string;
   updated_at: string;
   samples?: {
@@ -20,7 +18,7 @@ interface BillingRecord {
   customers?: {
     id: string;
     name: string;
-    tier: 'Platinum' | 'Gold' | 'Silver';
+    tier: "Platinum" | "Gold" | "Silver";
   };
 }
 
@@ -29,47 +27,45 @@ export const useBillingRecords = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetchBillingRecords = async () => {
-      try {
-        setLoading(true);
-        console.log('Fetching billing records...');
-        
-        const { data, error } = await supabase
-          .from('billing_records')
-          .select(`
-            *,
-            samples:sample_id (
-              id,
-              barcode,
-              customer_name
-            ),
-            customers:customer_id (
-              id,
-              name,
-              tier
-            )
-          `)
-          .order('created_at', { ascending: false });
+  const fetchBillingRecords = async () => {
+    try {
+      setLoading(true);
+      setError(null);
 
-        if (error) {
-          console.error('Error fetching billing records:', error);
-          throw error;
-        }
-        
-        console.log('Billing records fetched successfully:', data?.length || 0);
-        setBillingRecords(data || []);
-        setError(null);
-      } catch (err: any) {
-        console.error('Billing records fetch error:', err);
-        setError(err.message);
-      } finally {
-        setLoading(false);
+      const token = localStorage.getItem("token");
+      if (!token) {
+        throw new Error("Not authenticated");
       }
-    };
 
+      const res = await fetch("http://localhost:5000/billing-records", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (!res.ok) {
+        throw new Error("Failed to fetch billing records");
+      }
+
+      const data = await res.json();
+      setBillingRecords(data);
+    } catch (err: any) {
+      console.error("Billing records fetch error:", err);
+      setError(err.message || "Failed to load billing records");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
     fetchBillingRecords();
   }, []);
 
-  return { billingRecords, loading, error, refetch: () => window.location.reload() };
+  return {
+    billingRecords,
+    loading,
+    error,
+    refetch: fetchBillingRecords,
+  };
 };
