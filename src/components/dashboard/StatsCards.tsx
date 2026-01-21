@@ -1,22 +1,17 @@
-
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useSamples } from "../../hooks/useSamples";
-import { useBillingRecords } from "../../hooks/useBillingRecords";
 import { useAuth } from "../../hooks/useAuth";
 import { Loader2 } from "lucide-react";
 
 interface StatsCardsProps {
-  role: 'admin' | 'accession' | 'technician' | 'pathologist' | 'customer';
+  role: "admin" | "accession" | "technician" | "pathologist" | "customer";
 }
 
 const StatsCards = ({ role }: StatsCardsProps) => {
   const { samples, loading, error } = useSamples();
-  const { billingRecords, loading: billingLoading } = useBillingRecords();
   const { user } = useAuth();
 
-  console.log('StatsCards - Role:', role, 'Samples count:', samples.length, 'Loading:', loading, 'Error:', error);
-
-  if (loading || billingLoading) {
+  if (loading) {
     return (
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         {[1, 2, 3, 4].map((i) => (
@@ -40,150 +35,84 @@ const StatsCards = ({ role }: StatsCardsProps) => {
 
   const getStatsForRole = () => {
     switch (role) {
-      case 'admin':
-        const totalRevenue = billingRecords.reduce((sum, record) => sum + Number(record.amount), 0);
-        const pendingRevenue = billingRecords
-          .filter(record => record.payment_status === 'pending')
-          .reduce((sum, record) => sum + Number(record.amount), 0);
-        
+      case "admin":
         return [
           {
             title: "Total Samples",
             value: samples.length.toString(),
-            description: "All samples in system"
-          },
-          {
-            title: "Total Revenue",
-            value: `₹${totalRevenue.toLocaleString()}`,
-            description: "Generated revenue"
-          },
-          {
-            title: "Pending Revenue",
-            value: `₹${pendingRevenue.toLocaleString()}`,
-            description: "Awaiting payment"
+            description: "All samples in system",
           },
           {
             title: "Completed",
-            value: samples.filter(s => s.status === 'completed').length.toString(),
-            description: "Ready for delivery"
-          }
+            value: samples.filter((s) => s.status === "completed").length.toString(),
+            description: "Ready for delivery",
+          },
         ];
-      
-      case 'accession':
-        const todaySamples = samples.filter(sample => {
-          const today = new Date().toDateString();
-          const sampleDate = new Date(sample.accession_date || '').toDateString();
-          return today === sampleDate;
-        });
-        
+
+      case "accession":
         return [
           {
-            title: "Today's Samples",
-            value: todaySamples.length.toString(),
-            description: "Accessioned today"
-          },
-          {
             title: "Pending",
-            value: samples.filter(s => s.status === 'pending').length.toString(),
-            description: "Awaiting processing"
+            value: samples.filter((s) => s.status === "pending").length.toString(),
+            description: "Awaiting processing",
           },
           {
             title: "Total Samples",
             value: samples.length.toString(),
-            description: "All samples in system"
+            description: "All samples",
           },
-          {
-            title: "Rejected",
-            value: samples.filter(s => s.status === 'rejected').length.toString(),
-            description: "Quality issues"
-          }
         ];
-      
-      case 'technician':
-        const technicianSamples = samples.filter(sample => 
-          sample.assigned_technician === user?.id
+
+      case "technician":
+        const techSamples = samples.filter(
+          (s) => s.assigned_technician === user?.id
         );
-        
         return [
           {
             title: "Assigned to Me",
-            value: technicianSamples.length.toString(),
-            description: "My assigned samples"
-          },
-          {
-            title: "In Progress",
-            value: technicianSamples.filter(s => s.status === 'processing').length.toString(),
-            description: "Currently processing"
+            value: techSamples.length.toString(),
+            description: "My samples",
           },
           {
             title: "Completed",
-            value: technicianSamples.filter(s => s.status === 'completed').length.toString(),
-            description: "Ready for review"
+            value: techSamples.filter((s) => s.status === "completed").length.toString(),
+            description: "Finished work",
           },
-          {
-            title: "Available",
-            value: samples.filter(s => s.status === 'pending' && !s.assigned_technician).length.toString(),
-            description: "Available for assignment"
-          }
         ];
-      
-      case 'pathologist':
-        const pathologistSamples = samples.filter(sample => 
-          sample.assigned_pathologist === user?.id || 
-          (sample.status === 'review' && !sample.assigned_pathologist)
+
+      case "pathologist":
+        const pathSamples = samples.filter(
+          (s) =>
+            s.assigned_pathologist === user?.id ||
+            (s.status === "review" && !s.assigned_pathologist)
         );
-        
         return [
           {
             title: "Pending Review",
-            value: pathologistSamples.filter(s => s.status === 'review').length.toString(),
-            description: "Awaiting my review"
+            value: pathSamples.filter((s) => s.status === "review").length.toString(),
+            description: "Awaiting review",
           },
           {
             title: "Completed",
-            value: pathologistSamples.filter(s => s.status === 'completed').length.toString(),
-            description: "Reports finalized"
+            value: pathSamples.filter((s) => s.status === "completed").length.toString(),
+            description: "Reports finalized",
           },
-          {
-            title: "High Priority",
-            value: "0",
-            description: "Urgent samples"
-          },
-          {
-            title: "Total Assigned",
-            value: pathologistSamples.length.toString(),
-            description: "All assigned samples"
-          }
         ];
-      
-      case 'customer':
+
+      case "customer":
         return [
           {
-            title: "Total Samples",
+            title: "Submitted",
             value: samples.length.toString(),
-            description: "Submitted samples"
-          },
-          {
-            title: "In Progress",
-            value: samples.filter(s => ['pending', 'processing', 'review'].includes(s.status)).length.toString(),
-            description: "Being processed"
+            description: "Total samples",
           },
           {
             title: "Completed",
-            value: samples.filter(s => s.status === 'completed').length.toString(),
-            description: "Reports ready"
+            value: samples.filter((s) => s.status === "completed").length.toString(),
+            description: "Reports ready",
           },
-          {
-            title: "This Month",
-            value: samples.filter(sample => {
-              const thisMonth = new Date().getMonth();
-              const sampleMonth = new Date(sample.accession_date || '').getMonth();
-              return thisMonth === sampleMonth;
-            }).length.toString(),
-            description: "Samples this month"
-          }
         ];
-      
+
       default:
         return [];
     }
@@ -195,8 +124,10 @@ const StatsCards = ({ role }: StatsCardsProps) => {
     <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
       {stats.map((stat, index) => (
         <Card key={index}>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">{stat.title}</CardTitle>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">
+              {stat.title}
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{stat.value}</div>

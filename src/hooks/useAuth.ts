@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-const API_URL = "http://localhost:5000";
+const API_URL = import.meta.env.VITE_API_BASE_URL;
 
 export type AppUser = {
   id: string;
@@ -46,12 +46,10 @@ export const useAuth = () => {
 
     const data = await res.json();
 
-    // Save JWT + user
     localStorage.setItem("token", data.token);
     localStorage.setItem("user", JSON.stringify(data.user));
 
     setUser(data.user);
-
     return data;
   };
 

@@ -1,6 +1,7 @@
 
 import { cn } from "@/lib/utils";
-import { User } from "../../types/user";
+import { AppUser } from "../../hooks/useAuth";
+
 import { 
   Home, 
   Users, 
@@ -27,7 +28,7 @@ import {
 } from "@/components/ui/sidebar";
 
 interface SidebarProps {
-  user: User;
+  user: AppUser;
   currentView: string;
   setCurrentView: (view: string) => void;
 }

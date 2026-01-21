@@ -1,11 +1,12 @@
 
-import { User } from "../../types/user";
+import { AppUser } from "../../hooks/useAuth";
+
 import { Bell, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 
 interface TopBarProps {
-  user: User;
+  user: AppUser | null;
   onLogout: () => void;
 }
 

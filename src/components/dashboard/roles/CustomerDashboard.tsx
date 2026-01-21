@@ -201,7 +201,7 @@ const CustomerDashboard = ({ currentView }: CustomerDashboardProps) => {
               <p className="text-2xl font-bold text-blue-600">₹{
                 customerSamples.reduce((total, sample) => {
                   if (!goldTier) return total;
-                  switch (sample.test_type) {
+                  switch (sample.sample_type) {
                     case 'LBC': return total + goldTier.lbc_price;
                     case 'HPV': return total + goldTier.hpv_price;
                     case 'Co-test': return total + goldTier.co_test_price;
