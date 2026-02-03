@@ -11,8 +11,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { CreditCard, Edit, Loader2 } from "lucide-react";
-import { usePricingTiers } from "@/hooks/usePricingTiers";
-import { useCustomers } from "@/hooks/useCustomers";
+import {
+  usePricingTiers,
+  useCustomers,
+} from "@/hooks/useApiData";
 import { toast } from "sonner";
 
 const API_URL = "http://localhost:5000";
@@ -63,7 +65,7 @@ const PricingTiers = () => {
       const token = localStorage.getItem("token");
 
       const res = await fetch(
-        `${API_URL}/pricing-tiers/${tierName}`,
+        `${API_URL}/api/pricing-tiers/${tierName}`,
         {
           method: "PUT",
           headers: {

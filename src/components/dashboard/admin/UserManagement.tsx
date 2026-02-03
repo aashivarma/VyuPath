@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { getAuthHeaders } from "../../../lib/authHeaders";
 import {
   Card,
   CardContent,
@@ -54,13 +55,7 @@ const UserManagement = () => {
     lab_location: "",
   });
 
-  const getAuthHeaders = () => {
-    const token = localStorage.getItem("token");
-    return {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    };
-  };
+
 
   const fetchUsers = async () => {
     try {
@@ -98,7 +93,11 @@ const UserManagement = () => {
         body: JSON.stringify(newUser),
       });
 
-      if (!res.ok) throw new Error("Failed to create user");
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || data.message || "Failed to create user");
+      }
 
       toast.success(
         "User profile created successfully. User can now log in."
