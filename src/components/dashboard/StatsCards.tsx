@@ -44,7 +44,9 @@ const StatsCards = ({ role }: StatsCardsProps) => {
           },
           {
             title: "Completed",
-            value: samples.filter((s) => s.status === "completed").length.toString(),
+            value: samples
+              .filter((s) => s.status === "completed")
+              .length.toString(),
             description: "Ready for delivery",
           },
         ];
@@ -53,7 +55,9 @@ const StatsCards = ({ role }: StatsCardsProps) => {
         return [
           {
             title: "Pending",
-            value: samples.filter((s) => s.status === "pending").length.toString(),
+            value: samples
+              .filter((s) => s.status === "pending")
+              .length.toString(),
             description: "Awaiting processing",
           },
           {
@@ -65,7 +69,7 @@ const StatsCards = ({ role }: StatsCardsProps) => {
 
       case "technician":
         const techSamples = samples.filter(
-          (s) => s.assigned_technician === user?.id
+          (s) => s.assigned_technician === user?.id,
         );
         return [
           {
@@ -75,7 +79,9 @@ const StatsCards = ({ role }: StatsCardsProps) => {
           },
           {
             title: "Completed",
-            value: techSamples.filter((s) => s.status === "completed").length.toString(),
+            value: techSamples
+              .filter((s) => s.status === "completed")
+              .length.toString(),
             description: "Finished work",
           },
         ];
@@ -84,18 +90,36 @@ const StatsCards = ({ role }: StatsCardsProps) => {
         const pathSamples = samples.filter(
           (s) =>
             s.assigned_pathologist === user?.id ||
-            (s.status === "review" && !s.assigned_pathologist)
+            s.status === "pending" ||
+            s.status === "urgent",
         );
+
         return [
           {
             title: "Pending Review",
-            value: pathSamples.filter((s) => s.status === "review").length.toString(),
+            value: samples
+              .filter((s) => s.status === "pending")
+              .length.toString(),
             description: "Awaiting review",
           },
           {
             title: "Completed",
-            value: pathSamples.filter((s) => s.status === "completed").length.toString(),
+            value: samples
+              .filter((s) => s.status === "completed")
+              .length.toString(),
             description: "Reports finalized",
+          },
+          {
+            title: "High Priority",
+            value: samples
+              .filter((s) => s.status === "urgent")
+              .length.toString(),
+            description: "Urgent samples",
+          },
+          {
+            title: "Total Assigned",
+            value: samples.length.toString(),
+            description: "All assigned samples",
           },
         ];
 
@@ -108,7 +132,9 @@ const StatsCards = ({ role }: StatsCardsProps) => {
           },
           {
             title: "Completed",
-            value: samples.filter((s) => s.status === "completed").length.toString(),
+            value: samples
+              .filter((s) => s.status === "completed")
+              .length.toString(),
             description: "Reports ready",
           },
         ];
@@ -125,9 +151,7 @@ const StatsCards = ({ role }: StatsCardsProps) => {
       {stats.map((stat, index) => (
         <Card key={index}>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">
-              {stat.title}
-            </CardTitle>
+            <CardTitle className="text-sm font-medium">{stat.title}</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{stat.value}</div>

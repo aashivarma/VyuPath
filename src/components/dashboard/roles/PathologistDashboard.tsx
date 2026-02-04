@@ -10,33 +10,42 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Loader2, FileCheck, Eye } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { usePathologistDashboard } from "../../../hooks/usePathologistDashboard";
+import { useReviewQueue } from "../../../hooks/useReviewQueue";
+import { useRecentActivity } from "../../../hooks/useRecentActivity";
 
 interface PathologistDashboardProps {
   currentView: string;
 }
 
 const PathologistDashboard = ({ currentView }: PathologistDashboardProps) => {
-  const { samples, loading, error } = useSamples();
+  const { samples, loading: samplesLoading, error } = useSamples();
   const { testResults } = useTestResults();
   const { user } = useAuth();
   const { toast } = useToast();
 
+  const { data, loading: dashboardLoading } = usePathologistDashboard();
+  const { samples: reviewQueue } = useReviewQueue();
+  const { activities } = useRecentActivity();
+
   const [diagnosis, setDiagnosis] = useState<{ [key: string]: string }>({});
-  const [recommendations, setRecommendations] = useState<{ [key: string]: string }>({});
+  const [recommendations, setRecommendations] = useState<{
+    [key: string]: string;
+  }>({});
   const [submitting, setSubmitting] = useState<{ [key: string]: boolean }>({});
 
   // Filter samples assigned to this pathologist or pending review
   const pathologistSamples = samples.filter(
     (sample) =>
       sample.assigned_pathologist === user?.id ||
-      (sample.status === "review" && !sample.assigned_pathologist)
+      (sample.status === "review" && !sample.assigned_pathologist),
   );
 
   const pendingReviews = pathologistSamples.filter(
-    (sample) => sample.status === "review"
+    (sample) => sample.status === "review",
   );
   const completedSamples = pathologistSamples.filter(
-    (sample) => sample.status === "completed"
+    (sample) => sample.status === "completed",
   );
 
   // ---------------- FINALIZE REPORT (SUPABASE REMOVED) ----------------
@@ -73,7 +82,7 @@ const PathologistDashboard = ({ currentView }: PathologistDashboardProps) => {
 
       // 2️⃣ Update or create test result
       const existingResult = testResults.find(
-        (tr) => tr.sample_id === sampleId
+        (tr) => tr.sample_id === sampleId,
       );
 
       if (existingResult) {
@@ -91,7 +100,7 @@ const PathologistDashboard = ({ currentView }: PathologistDashboardProps) => {
               report_generated: true,
               reviewed_by: user?.id,
             }),
-          }
+          },
         );
 
         if (!updateResultRes.ok)
@@ -143,7 +152,7 @@ const PathologistDashboard = ({ currentView }: PathologistDashboardProps) => {
 
   // ---------------- UI (UNCHANGED) ----------------
   const renderContent = () => {
-    if (loading) {
+    if (dashboardLoading) {
       return (
         <div className="flex items-center justify-center p-8">
           <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
@@ -161,13 +170,69 @@ const PathologistDashboard = ({ currentView }: PathologistDashboardProps) => {
     }
 
     switch (currentView) {
-      case "dashboard":
+      case "dashboard": {
+        if (dashboardLoading) return <div>Loading...</div>;
+
         return (
           <div className="space-y-6">
+            {/* Title */}
             <h1 className="text-3xl font-bold">Pathologist Dashboard</h1>
+
+            {/* Stats Cards */}
             <StatsCards role="pathologist" />
+
+            {/* Reviews + Activities Layout */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* LEFT SIDE — Pending AI Reviews */}
+              <div className="lg:col-span-2">
+                <h2 className="text-2xl font-bold mb-4">
+                  Pending AI Reviews ({reviewQueue.length})
+                </h2>
+
+                {reviewQueue.length === 0 ? (
+                  <div className="text-gray-500">No pending reviews</div>
+                ) : (
+                  reviewQueue.map((sample) => (
+                    <div
+                      key={sample.id}
+                      className="border bg-white p-4 rounded-lg shadow-sm mb-3"
+                    >
+                      <div className="font-semibold text-lg">
+                        {sample.barcode}
+                      </div>
+
+                      <div className="text-gray-600">{sample.sample_type}</div>
+
+                      <div className="text-sm text-gray-500">
+                        Patient: {sample.patient_name}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              {/* RIGHT SIDE — Recent Activities */}
+              <div>
+                <h2 className="text-2xl font-bold mb-4">Recent Activities</h2>
+
+                <div className="bg-white border rounded-lg p-4 shadow-sm space-y-3">
+                  {activities.length === 0 ? (
+                    <div className="text-gray-500 text-sm">
+                      No recent activities
+                    </div>
+                  ) : (
+                    activities.map((act, index) => (
+                      <div key={index} className="text-green-600 text-sm">
+                        • Completed review for {act.barcode}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
         );
+      }
 
       case "review-queue":
         return <AISlideViewer />;
