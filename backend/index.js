@@ -38,12 +38,12 @@ app.get("/db-test", async (req, res) => {
 ================================ */
 
 app.post("/login", async (req, res) => {
-  console.log("LOGIN HIT");               
-  console.log("REQUEST BODY:", req.body); 
-  debugger; 
-  
+  console.log("LOGIN HIT");
+  console.log("REQUEST BODY:", req.body);
+  debugger;
+
   const { email, password } = req.body;
-console.log("req.body", req.body);
+  console.log("req.body", req.body);
   if (!email || !password) {
     return res.status(400).json({ error: "Email and password required" });
   }
@@ -61,24 +61,23 @@ console.log("req.body", req.body);
       JOIN roles r ON u.role_id = r.id
       WHERE u.email = $1 AND u.is_active = true
       `,
-      [email]
+      [email],
     );
-console.log("result", result);
+    console.log("result", result);
     if (result.rows.length === 0) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
     const user = result.rows[0];
-    const valid = await bcrypt.compare(password, user.password_hash);
-
-    if (!valid) {
+    // TEMPORARY: plain-text password check (DEV ONLY)
+    if (password !== user.password_hash) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
     const token = jwt.sign(
       { id: user.id, role: user.role },
       process.env.JWT_SECRET,
-      { expiresIn: "1h" }
+      { expiresIn: "1h" },
     );
 
     res.json({
@@ -100,7 +99,7 @@ console.log("result", result);
    USERS (CREATE USER) ✅
 ================================ */
 
-app.post("/users", authenticateToken, async (req, res) => {
+app.post("/users", async (req, res) => {
   const { name, email, password, role } = req.body;
 
   if (!name || !email || !role) {
@@ -108,10 +107,9 @@ app.post("/users", authenticateToken, async (req, res) => {
   }
 
   try {
-    const existing = await pool.query(
-      "SELECT id FROM users WHERE email = $1",
-      [email]
-    );
+    const existing = await pool.query("SELECT id FROM users WHERE email = $1", [
+      email,
+    ]);
 
     if (existing.rows.length > 0) {
       return res.status(409).json({ error: "User already exists" });
@@ -119,15 +117,15 @@ app.post("/users", authenticateToken, async (req, res) => {
 
     const roleResult = await pool.query(
       "SELECT id FROM roles WHERE name = $1",
-      [role.toLowerCase()]
+      [role.toLowerCase()],
     );
 
     if (roleResult.rows.length === 0) {
       return res.status(400).json({ error: "Invalid role" });
     }
 
-    const tempPassword = "Welcome@123";
-    const passwordHash = await bcrypt.hash(tempPassword, 10);
+    const tempPassword = "Password@1";
+    const passwordHash = tempPassword; // TEMPORARY (NO bcrypt)
 
     const result = await pool.query(
       `
@@ -135,7 +133,7 @@ app.post("/users", authenticateToken, async (req, res) => {
       VALUES ($1, $2, $3, $4, true)
       RETURNING id, name, email
       `,
-      [name, email, passwordHash, roleResult.rows[0].id]
+      [name, email, passwordHash, roleResult.rows[0].id],
     );
 
     res.status(201).json(result.rows[0]);
@@ -149,7 +147,149 @@ app.post("/users", authenticateToken, async (req, res) => {
    USERS (FETCH ALL USERS) ✅
 ================================ */
 
-app.get("/users", authenticateToken, async (req, res) => {
+/* ===============================
+   PATHOLOGIST DASHBOARD
+================================ */
+
+app.get("/api/dashboard/pathologist", async (req, res) => {
+  try {
+    // Pending Reviews
+    const pendingResult = await pool.query(`
+      SELECT COUNT(*) 
+      FROM samples
+      WHERE status = 'pending'
+    `);
+
+    // Completed Reviews
+    const completedResult = await pool.query(`
+      SELECT COUNT(*) 
+      FROM test_results
+      WHERE report_generated = true
+    `);
+
+    // High Priority (example logic)
+    const highPriorityResult = await pool.query(`
+      SELECT COUNT(*)
+      FROM samples
+      WHERE status = 'urgent'
+    `);
+
+    // Total Assigned
+    const totalAssignedResult = await pool.query(`
+      SELECT COUNT(*)
+      FROM samples
+    `);
+
+    // Recent Samples
+    const recentSamples = await pool.query(`
+      SELECT 
+        s.id,
+        s.sample_type,
+        s.status,
+        s.collected_at,
+        p.name AS patient_name,
+        l.name AS lab_name
+      FROM samples s
+      JOIN patients p ON s.patient_id = p.id
+      JOIN labs l ON s.lab_id = l.id
+      ORDER BY s.collected_at DESC
+      LIMIT 8
+    `);
+
+    res.json({
+      pending: parseInt(pendingResult.rows[0].count),
+      completed: parseInt(completedResult.rows[0].count),
+      highPriority: parseInt(highPriorityResult.rows[0].count),
+      totalAssigned: parseInt(totalAssignedResult.rows[0].count),
+      recentSamples: recentSamples.rows,
+    });
+  } catch (err) {
+    console.error("DASHBOARD ERROR:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/pathologist/review-queue", async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        s.id,
+        s.barcode,
+        s.sample_type,
+        s.status,
+        s.collected_at,
+        p.name AS patient_name,
+        l.name AS lab_name
+      FROM samples s
+      JOIN patients p ON s.patient_id = p.id
+      JOIN labs l ON s.lab_id = l.id
+      WHERE s.status = 'review'
+      ORDER BY s.collected_at DESC
+    `);
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+app.put("/api/samples/:id/finalize", async (req, res) => {
+  const { id } = req.params;
+  const { assigned_pathologist } = req.body;
+
+  try {
+    await pool.query(
+      `
+      UPDATE samples
+      SET status = 'completed',
+          assigned_pathologist = $1
+      WHERE id = $2
+    `,
+      [assigned_pathologist, id],
+    );
+
+    res.json({ message: "Sample finalized" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+app.post("/api/test-results", async (req, res) => {
+  const { sample_id, diagnosis, recommendations } = req.body;
+
+  try {
+    const result = await pool.query(
+      `
+      INSERT INTO test_results (sample_id, diagnosis, recommendations, report_generated)
+      VALUES ($1, $2, $3, true)
+      RETURNING *
+    `,
+      [sample_id, diagnosis, recommendations],
+    );
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+app.get("/api/pathologist/recent-activity", async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT s.barcode
+      FROM test_results tr
+      JOIN samples s ON tr.sample_id = s.id
+      WHERE tr.report_generated = true
+      ORDER BY s.collected_at DESC
+      LIMIT 5
+    `);
+
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+// Pathology ends here 
+
+app.get("/users", async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT
@@ -174,7 +314,7 @@ app.get("/users", authenticateToken, async (req, res) => {
    LABS (FETCH LAB LOCATIONS) ✅
 ================================ */
 
-app.get("/api/labs", authenticateToken, async (req, res) => {
+app.get("/api/labs", async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT id, name
@@ -189,7 +329,7 @@ app.get("/api/labs", authenticateToken, async (req, res) => {
   }
 });
 
-app.post("/api/labs", authenticateToken, async (req, res) => {
+app.post("/api/labs", async (req, res) => {
   const { name, address, contact_info, active } = req.body;
 
   if (!name || !address) {
@@ -203,7 +343,7 @@ app.post("/api/labs", authenticateToken, async (req, res) => {
       VALUES ($1, $2, $3, $4)
       RETURNING *
       `,
-      [name, address, contact_info || {}, active ?? true]
+      [name, address, contact_info || {}, active ?? true],
     );
 
     res.status(201).json(result.rows[0]);
@@ -213,7 +353,7 @@ app.post("/api/labs", authenticateToken, async (req, res) => {
   }
 });
 
-app.delete("/api/labs/:id", authenticateToken, async (req, res) => {
+app.delete("/api/labs/:id", async (req, res) => {
   const { id } = req.params;
 
   try {
@@ -223,7 +363,7 @@ app.delete("/api/labs/:id", authenticateToken, async (req, res) => {
       WHERE id = $1
       RETURNING id
       `,
-      [id]
+      [id],
     );
 
     if (result.rowCount === 0) {
@@ -237,7 +377,7 @@ app.delete("/api/labs/:id", authenticateToken, async (req, res) => {
   }
 });
 
-app.put("/api/labs/:id", authenticateToken, async (req, res) => {
+app.put("/api/labs/:id", async (req, res) => {
   const { id } = req.params;
   const { name } = req.body;
 
@@ -253,7 +393,7 @@ app.put("/api/labs/:id", authenticateToken, async (req, res) => {
       WHERE id = $2
       RETURNING *
       `,
-      [name, id]
+      [name, id],
     );
 
     if (result.rowCount === 0) {
@@ -271,7 +411,7 @@ app.put("/api/labs/:id", authenticateToken, async (req, res) => {
    PATIENTS (CREATE PATIENT) ✅
 ================================ */
 
-app.post("/api/patients", authenticateToken, async (req, res) => {
+app.post("/api/patients", async (req, res) => {
   const { name, age, gender } = req.body;
 
   if (!name) {
@@ -285,7 +425,7 @@ app.post("/api/patients", authenticateToken, async (req, res) => {
       VALUES ($1, $2, $3)
       RETURNING *
       `,
-      [name, age || null, gender || null]
+      [name, age || null, gender || null],
     );
 
     res.status(201).json(result.rows[0]);
@@ -299,7 +439,7 @@ app.post("/api/patients", authenticateToken, async (req, res) => {
    SAMPLES
 ================================ */
 
-app.get("/api/samples", authenticateToken, async (req, res) => {
+app.get("/api/samples", async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT
@@ -326,7 +466,7 @@ app.get("/api/samples", authenticateToken, async (req, res) => {
    BILLING RECORDS
 ================================ */
 
-app.get("/api/billing-records", authenticateToken, async (req, res) => {
+app.get("/api/billing-records", async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT id, amount, payment_status, created_at
@@ -345,7 +485,7 @@ app.get("/api/billing-records", authenticateToken, async (req, res) => {
    TEST RESULTS
 ================================ */
 
-app.get("/api/test-results", authenticateToken, async (req, res) => {
+app.get("/api/test-results", async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT id, sample_id, diagnosis, recommendations, report_generated
@@ -363,7 +503,7 @@ app.get("/api/test-results", authenticateToken, async (req, res) => {
    PRICING TIERS
 ================================ */
 
-app.get("/api/pricing-tiers", authenticateToken, async (req, res) => {
+app.get("/api/pricing-tiers", async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT id, tier_name, lbc_price, hpv_price, co_test_price
@@ -380,7 +520,7 @@ app.get("/api/pricing-tiers", authenticateToken, async (req, res) => {
 /* ===============================
    CUSTOMERS
 ================================ */
-app.get("/api/customers", authenticateToken, async (req, res) => {
+app.get("/api/customers", async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT u.id, u.name, u.email, u.contact, u.tier, u.location
@@ -395,7 +535,7 @@ app.get("/api/customers", authenticateToken, async (req, res) => {
   }
 });
 
-app.post("/api/customers", authenticateToken, async (req, res) => {
+app.post("/api/customers", async (req, res) => {
   const { name, email, contact, tier, location } = req.body;
 
   if (!name || !email || !contact || !tier || !location) {
@@ -404,17 +544,16 @@ app.post("/api/customers", authenticateToken, async (req, res) => {
 
   try {
     // check existing
-    const existing = await pool.query(
-      "SELECT id FROM users WHERE email = $1",
-      [email]
-    );
+    const existing = await pool.query("SELECT id FROM users WHERE email = $1", [
+      email,
+    ]);
     if (existing.rows.length > 0) {
       return res.status(409).json({ error: "Customer already exists" });
     }
 
     // get customer role
     const roleRes = await pool.query(
-      "SELECT id FROM roles WHERE name = 'customer'"
+      "SELECT id FROM roles WHERE name = 'customer'",
     );
 
     const passwordHash = await bcrypt.hash("Welcome@123", 10);
@@ -426,15 +565,7 @@ app.post("/api/customers", authenticateToken, async (req, res) => {
       VALUES ($1,$2,$3,$4,$5,$6,$7,true)
       RETURNING id, name, email, contact, tier, location
       `,
-      [
-        name,
-        email,
-        passwordHash,
-        roleRes.rows[0].id,
-        contact,
-        tier,
-        location
-      ]
+      [name, email, passwordHash, roleRes.rows[0].id, contact, tier, location],
     );
 
     res.status(201).json(result.rows[0]);
@@ -444,7 +575,7 @@ app.post("/api/customers", authenticateToken, async (req, res) => {
   }
 });
 
-app.get("/api/customers", authenticateToken, async (req, res) => {
+app.get("/api/customers", async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT u.id, u.name, u.email, u.contact, u.tier, u.location
@@ -459,7 +590,7 @@ app.get("/api/customers", authenticateToken, async (req, res) => {
   }
 });
 
-app.delete("/api/customers/:id", authenticateToken, async (req, res) => {
+app.delete("/api/customers/:id", async (req, res) => {
   const { id } = req.params;
 
   try {
@@ -473,7 +604,7 @@ app.delete("/api/customers/:id", authenticateToken, async (req, res) => {
         AND users.id = $1
       RETURNING users.id
       `,
-      [id]
+      [id],
     );
 
     if (result.rowCount === 0) {
@@ -487,7 +618,7 @@ app.delete("/api/customers/:id", authenticateToken, async (req, res) => {
   }
 });
 
-app.put("/api/customers/:id", authenticateToken, async (req, res) => {
+app.put("/api/customers/:id", async (req, res) => {
   const { id } = req.params;
   const { name, email, contact, tier, location } = req.body;
 
@@ -511,7 +642,7 @@ app.put("/api/customers/:id", authenticateToken, async (req, res) => {
         AND users.id = $6
       RETURNING users.*
       `,
-      [name, email, contact, tier, location, id]
+      [name, email, contact, tier, location, id],
     );
 
     if (result.rowCount === 0) {
@@ -524,7 +655,6 @@ app.put("/api/customers/:id", authenticateToken, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
 
 /* ===============================
    SERVER
