@@ -19,7 +19,8 @@ interface PathologistDashboardProps {
 }
 
 const PathologistDashboard = ({ currentView }: PathologistDashboardProps) => {
-  const { samples, loading: samplesLoading, error } = useSamples();
+  const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
+  const { samples, loading, error } = useSamples();
   const { testResults } = useTestResults();
   const { user } = useAuth();
   const { toast } = useToast();
@@ -29,24 +30,26 @@ const PathologistDashboard = ({ currentView }: PathologistDashboardProps) => {
   const { activities } = useRecentActivity();
 
   const [diagnosis, setDiagnosis] = useState<{ [key: string]: string }>({});
-  const [recommendations, setRecommendations] = useState<{
-    [key: string]: string;
-  }>({});
+  const [recommendations, setRecommendations] = useState<{ [key: string]: string }>({});
   const [submitting, setSubmitting] = useState<{ [key: string]: boolean }>({});
 
   // Filter samples assigned to this pathologist or pending review
   const pathologistSamples = samples.filter(
     (sample) =>
       sample.assigned_pathologist === user?.id ||
-      (sample.status === "review" && !sample.assigned_pathologist),
+      (sample.status === "review" && !sample.assigned_pathologist)
   );
 
   const pendingReviews = pathologistSamples.filter(
-    (sample) => sample.status === "review",
+    (sample) => sample.status === "review"
   );
   const completedSamples = pathologistSamples.filter(
-    (sample) => sample.status === "completed",
+    (sample) => sample.status === "completed"
   );
+
+  const handleCaseDoubleClick = (sampleId: string) => {
+    setSelectedCaseId(sampleId);
+  };
 
   // ---------------- FINALIZE REPORT (SUPABASE REMOVED) ----------------
   const handleFinalizeReport = async (sampleId: string) => {
@@ -82,7 +85,7 @@ const PathologistDashboard = ({ currentView }: PathologistDashboardProps) => {
 
       // 2️⃣ Update or create test result
       const existingResult = testResults.find(
-        (tr) => tr.sample_id === sampleId,
+        (tr) => tr.sample_id === sampleId
       );
 
       if (existingResult) {
@@ -100,7 +103,7 @@ const PathologistDashboard = ({ currentView }: PathologistDashboardProps) => {
               report_generated: true,
               reviewed_by: user?.id,
             }),
-          },
+          }
         );
 
         if (!updateResultRes.ok)
@@ -152,7 +155,7 @@ const PathologistDashboard = ({ currentView }: PathologistDashboardProps) => {
 
   // ---------------- UI (UNCHANGED) ----------------
   const renderContent = () => {
-    if (dashboardLoading) {
+    if (loading) {
       return (
         <div className="flex items-center justify-center p-8">
           <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
@@ -170,15 +173,10 @@ const PathologistDashboard = ({ currentView }: PathologistDashboardProps) => {
     }
 
     switch (currentView) {
-      case "dashboard": {
-        if (dashboardLoading) return <div>Loading...</div>;
-
+      case "dashboard":
         return (
           <div className="space-y-6">
-            {/* Title */}
             <h1 className="text-3xl font-bold">Pathologist Dashboard</h1>
-
-            {/* Stats Cards */}
             <StatsCards role="pathologist" />
 
             {/* Reviews + Activities Layout */}
@@ -230,9 +228,9 @@ const PathologistDashboard = ({ currentView }: PathologistDashboardProps) => {
                 </div>
               </div>
             </div>
+
           </div>
         );
-      }
 
       case "review-queue":
         return <AISlideViewer />;

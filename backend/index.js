@@ -69,8 +69,9 @@ app.post("/login", async (req, res) => {
     }
 
     const user = result.rows[0];
-    // TEMPORARY: plain-text password check (DEV ONLY)
-    if (password !== user.password_hash) {
+    const valid = await bcrypt.compare(password, user.password_hash);
+
+    if (!valid) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
@@ -99,7 +100,7 @@ app.post("/login", async (req, res) => {
    USERS (CREATE USER) ✅
 ================================ */
 
-app.post("/users", async (req, res) => {
+app.post("/users", authenticateToken,async (req, res) => {
   const { name, email, password, role } = req.body;
 
   if (!name || !email || !role) {
@@ -124,8 +125,9 @@ app.post("/users", async (req, res) => {
       return res.status(400).json({ error: "Invalid role" });
     }
 
-    const tempPassword = "Password@1";
-    const passwordHash = tempPassword; // TEMPORARY (NO bcrypt)
+  
+    const tempPassword = "Welcome@123";
+    const passwordHash = await bcrypt.hash(tempPassword, 10);
 
     const result = await pool.query(
       `
@@ -146,6 +148,26 @@ app.post("/users", async (req, res) => {
 /* ===============================
    USERS (FETCH ALL USERS) ✅
 ================================ */
+app.get("/users", authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        u.id,
+        u.name,
+        u.email,
+        r.name AS role,
+        u.is_active
+      FROM users u
+      JOIN roles r ON u.role_id = r.id
+      
+    `);
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error("FETCH USERS ERROR:", err);
+    res.status(500).json({ error: "Failed to fetch users" });
+  }
+});
 
 /* ===============================
    PATHOLOGIST DASHBOARD
@@ -289,32 +311,12 @@ app.get("/api/pathologist/recent-activity", async (req, res) => {
 });
 // Pathology ends here 
 
-app.get("/users", async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT
-        u.id,
-        u.name,
-        u.email,
-        r.name AS role,
-        u.is_active
-      FROM users u
-      JOIN roles r ON u.role_id = r.id
-      
-    `);
-
-    res.json(result.rows);
-  } catch (err) {
-    console.error("FETCH USERS ERROR:", err);
-    res.status(500).json({ error: "Failed to fetch users" });
-  }
-});
 
 /* ===============================
    LABS (FETCH LAB LOCATIONS) ✅
 ================================ */
 
-app.get("/api/labs", async (req, res) => {
+app.get("/api/labs", authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT id, name
@@ -329,7 +331,7 @@ app.get("/api/labs", async (req, res) => {
   }
 });
 
-app.post("/api/labs", async (req, res) => {
+app.post("/api/labs", authenticateToken, async (req, res) => {
   const { name, address, contact_info, active } = req.body;
 
   if (!name || !address) {
@@ -353,7 +355,7 @@ app.post("/api/labs", async (req, res) => {
   }
 });
 
-app.delete("/api/labs/:id", async (req, res) => {
+app.delete("/api/labs/:id", authenticateToken, async (req, res) => {
   const { id } = req.params;
 
   try {
@@ -377,7 +379,7 @@ app.delete("/api/labs/:id", async (req, res) => {
   }
 });
 
-app.put("/api/labs/:id", async (req, res) => {
+app.put("/api/labs/:id", authenticateToken, async (req, res) => {
   const { id } = req.params;
   const { name } = req.body;
 
@@ -411,7 +413,7 @@ app.put("/api/labs/:id", async (req, res) => {
    PATIENTS (CREATE PATIENT) ✅
 ================================ */
 
-app.post("/api/patients", async (req, res) => {
+app.post("/api/patients", authenticateToken, async (req, res) => {
   const { name, age, gender } = req.body;
 
   if (!name) {
@@ -439,7 +441,7 @@ app.post("/api/patients", async (req, res) => {
    SAMPLES
 ================================ */
 
-app.get("/api/samples", async (req, res) => {
+app.get("/api/samples", authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT
@@ -462,11 +464,93 @@ app.get("/api/samples", async (req, res) => {
   }
 });
 
+app.put("/api/samples/:id/approve", authenticateToken, async (req, res) => {
+  const sampleId = req.params.id;
+  const {
+    diagnosis,
+    recommendations,
+    reviewed_by,
+    patient_id
+  } = req.body;
+
+  try {
+    // 1️⃣ Update sample status
+    await pool.query(
+      `
+      UPDATE samples
+      SET status = 'completed'
+      WHERE id = $1
+      `,
+      [sampleId]
+    );
+
+    // 2️⃣ Check if test result already exists
+    const existingResult = await pool.query(
+      `
+      SELECT id
+      FROM test_results
+      WHERE sample_id = $1
+      `,
+      [sampleId]
+    );
+
+    // 3️⃣ Update or Insert test result
+    if (existingResult.rows.length > 0) {
+      await pool.query(
+        `
+        UPDATE test_results
+        SET diagnosis = $1,
+            recommendations = $2,
+            report_generated = true,
+            reviewed_by = $3
+        WHERE sample_id = $4
+        `,
+        [diagnosis, recommendations, reviewed_by, sampleId]
+      );
+    } else {
+      await pool.query(
+        `
+        INSERT INTO test_results
+        (sample_id, patient_id, diagnosis, recommendations, report_generated, reviewed_by)
+        VALUES ($1, $2, $3, $4, true, $5)
+        `,
+        [sampleId, patient_id, diagnosis, recommendations, reviewed_by]
+      );
+    }
+
+    res.json({ success: true });
+
+  } catch (err) {
+    console.error("APPROVE SAMPLE ERROR:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/upload/slides/:sampleId", authenticateToken, async (req, res) => {
+  const { sampleId } = req.params;
+
+  try {
+    const result = await pool.query(
+      `
+      SELECT id, file_path, file_name, sample_id
+      FROM slide_images
+      WHERE sample_id = $1
+      `,
+      [sampleId]
+    );
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error("SLIDES ERROR:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 /* ===============================
    BILLING RECORDS
 ================================ */
 
-app.get("/api/billing-records", async (req, res) => {
+app.get("/api/billing-records", authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT id, amount, payment_status, created_at
@@ -485,7 +569,7 @@ app.get("/api/billing-records", async (req, res) => {
    TEST RESULTS
 ================================ */
 
-app.get("/api/test-results", async (req, res) => {
+app.get("/api/test-results", authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT id, sample_id, diagnosis, recommendations, report_generated
@@ -499,11 +583,52 @@ app.get("/api/test-results", async (req, res) => {
   }
 });
 
+app.post('/api/test-results', async (req, res) => {
+  const {
+    sample_id,
+    patient_id,
+    diagnosis,
+    recommendations,
+    reviewed_by
+  } = req.body;
+
+  try {
+    const existing = await db.query(
+      'SELECT id FROM test_results WHERE sample_id = $1',
+      [sample_id]
+    );
+
+    if (existing.rows.length > 0) {
+      await db.query(
+        `UPDATE test_results
+         SET diagnosis=$1,
+             recommendations=$2,
+             report_generated=true,
+             reviewed_by=$3
+         WHERE sample_id=$4`,
+        [diagnosis, recommendations, reviewed_by, sample_id]
+      );
+    } else {
+      await db.query(
+        `INSERT INTO test_results
+         (sample_id, patient_id, diagnosis, recommendations, report_generated, reviewed_by)
+         VALUES ($1,$2,$3,$4,true,$5)`,
+        [sample_id, patient_id, diagnosis, recommendations, reviewed_by]
+      );
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'DB error' });
+  }
+});
+
 /* ===============================
    PRICING TIERS
 ================================ */
 
-app.get("/api/pricing-tiers", async (req, res) => {
+app.get("/api/pricing-tiers", authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT id, tier_name, lbc_price, hpv_price, co_test_price
@@ -520,7 +645,7 @@ app.get("/api/pricing-tiers", async (req, res) => {
 /* ===============================
    CUSTOMERS
 ================================ */
-app.get("/api/customers", async (req, res) => {
+app.get("/api/customers", authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT u.id, u.name, u.email, u.contact, u.tier, u.location
@@ -535,7 +660,7 @@ app.get("/api/customers", async (req, res) => {
   }
 });
 
-app.post("/api/customers", async (req, res) => {
+app.post("/api/customers", authenticateToken, async (req, res) => {
   const { name, email, contact, tier, location } = req.body;
 
   if (!name || !email || !contact || !tier || !location) {
@@ -575,7 +700,7 @@ app.post("/api/customers", async (req, res) => {
   }
 });
 
-app.get("/api/customers", async (req, res) => {
+app.get("/api/customers", authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT u.id, u.name, u.email, u.contact, u.tier, u.location
@@ -590,7 +715,7 @@ app.get("/api/customers", async (req, res) => {
   }
 });
 
-app.delete("/api/customers/:id", async (req, res) => {
+app.delete("/api/customers/:id", authenticateToken, async (req, res) => {
   const { id } = req.params;
 
   try {
@@ -618,7 +743,7 @@ app.delete("/api/customers/:id", async (req, res) => {
   }
 });
 
-app.put("/api/customers/:id", async (req, res) => {
+app.put("/api/customers/:id", authenticateToken, async (req, res) => {
   const { id } = req.params;
   const { name, email, contact, tier, location } = req.body;
 

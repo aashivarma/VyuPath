@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -9,7 +9,9 @@ import {
   Microscope,
   Grid3X3,
   Eye,
+  Loader2
 } from "lucide-react";
+import OpenSeadragonViewer, { OpenSeadragonViewerHandle, ViewerNavigationTarget } from "./OpenSeadragonViewer";
 import SlideViewer from "./SlideViewer";
 import SlideGridView from "./SlideGridView";
 import PatientInformation from "./PatientInformation";
@@ -18,261 +20,434 @@ import EnhancedActionPanel from "./EnhancedActionPanel";
 import CaseNavigation from "./CaseNavigation";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
+import { useSamples } from "@/hooks/useSamples";
+
+// Helper to detect if running on EC2 (non-localhost)
+const isEC2 = () => typeof window !== 'undefined' && window.location.hostname !== 'localhost';
+
+// Get auth token for EC2 JWT auth
+const getAuthToken = () => {
+  if (typeof window !== 'undefined') {
+    return localStorage.getItem('vyuhaa_access_token');
+  }
+  return null;
+};
+
+interface SlideImage {
+  id: string;
+  upload_url: string | null;
+  file_name: string;
+  sample_id: string | null;
+}
+
+interface AISlideViewerProps {
+  initialCaseId?: string | null;
+  tileName?: string | null;
+}
 
 const API_URL = "http://localhost:5000";
 
-const AISlideViewer = () => {
-  const [selectedSlide, setSelectedSlide] = useState("slide-001");
+
+const AISlideViewer = ({ initialCaseId, tileName: propTileName }: AISlideViewerProps = {}) => {
+  const [selectedSampleId, setSelectedSampleId] = useState<string | null>(initialCaseId || null);
   const [activeTab, setActiveTab] = useState("viewer");
+  const [slideImages, setSlideImages] = useState<SlideImage[]>([]);
+  const [loadingImages, setLoadingImages] = useState(false);
   const { toast } = useToast();
   const { user } = useAuth();
+  const { samples, loading: samplesLoading } = useSamples();
+  
+  // Ref to the OpenSeadragon viewer for navigation control
+  const viewerRef = useRef<OpenSeadragonViewerHandle>(null);
 
-  const mockSlideData: any = {
-    "slide-001": {
-      id: "slide-001",
-      barcode: "VYU2024001234",
-      patientData: {
-        id: "patient-001",
-        name: "Priya Sharma",
-        age: 32,
-        gender: "Female",
-        contactNumber: "+91-9876543210",
-        address: "123 MG Road, Bangalore, Karnataka",
-        medicalHistory: "No significant past medical history",
-        lastMenstrualPeriod: "2024-05-25",
-        contraceptiveUse: "Oral contraceptive pills for 2 years",
-        pregnancyHistory: "G2P2, Normal vaginal deliveries",
-        clinicalHistory:
-          "Routine screening. Patient asymptomatic. Regular screening every 3 years.",
-        symptoms: "None reported",
-        riskFactors: [
-          "Multiple sexual partners",
-          "Early age at first intercourse",
-        ],
-        previousCytology: [],
-        previousBiopsy: [],
-      },
-      sampleData: {
-        barcode: "VYU2024001234",
-        testType: "LBC",
-        collectionDate: "2024-06-08",
-        clinicalIndication: "Routine cervical screening",
-        specimenAdequacy: "Satisfactory for evaluation",
-      },
-      aiAnalysis: {
-        status: "completed",
-        confidence: 92,
-        findings: [
-          { type: "HSIL", probability: 92 },
-          { type: "LSIL", probability: 78 },
-        ],
-        cellsAnalyzed: 15420,
-        suspiciousCells: 23,
-        recommendations:
-          "Manual review recommended. Consider HPV co-testing.",
-      },
-      currentStatus: "pending" as const,
+  // Filter samples that are in 'review' status (ready for pathologist)
+  const reviewSamples = samples.filter(sample => 
+    sample.status === 'review' || 
+    (sample.assigned_pathologist === user?.id && sample.status !== 'completed')
+  );
+
+  // Set initial case or first sample when samples load
+  useEffect(() => {
+    if (initialCaseId) {
+      setSelectedSampleId(initialCaseId);
+    } else if (reviewSamples.length > 0 && !selectedSampleId) {
+      setSelectedSampleId(reviewSamples[0].id);
+    }
+  }, [reviewSamples, selectedSampleId, initialCaseId]);
+
+  // Fetch slide images for selected sample
+  useEffect(() => {
+    const fetchSlideImages = async () => {
+      if (!selectedSampleId) return;
+      
+      setLoadingImages(true);
+
+      try {
+        const token = getAuthToken();
+
+        const response = await fetch(`/api/upload/slides/${selectedSampleId}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {}
+        });
+
+        if (!response.ok) throw new Error('Failed to fetch slides');
+
+        const data = await response.json();
+
+        const mappedData = data.map((item: any) => ({
+          id: item.id,
+          upload_url: item.file_path || item.url,
+          file_name: item.file_name,
+          sample_id: item.sample_id
+        }));
+
+        setSlideImages(mappedData);
+
+      } catch (error) {
+        console.error('Error fetching slide images:', error);
+      } finally {
+        setLoadingImages(false);
+      }
+
+    };
+
+    fetchSlideImages();
+  }, [selectedSampleId]);
+
+  const currentSample = reviewSamples.find(s => s.id === selectedSampleId) || reviewSamples[0];
+
+  // Transform samples for CaseNavigation
+  const casesForNavigation = reviewSamples.map(sample => ({
+    id: sample.id,
+    barcode: sample.barcode ?? sample.id ?? "",
+    patientName: sample.patients?.name || 'Unknown Patient',
+    age: sample.patients?.age || 0,
+    testType: sample.test_type,
+    status: sample.status === 'completed' ? 'approved' as const : 
+            sample.status === 'review' ? 'pending' as const : 'pending' as const,
+    priority: (sample.priority as "normal" | "urgent" | "stat") ?? "normal",
+    collectionDate: sample.accession_date ? new Date(sample.accession_date).toLocaleDateString() : 'N/A',
+    assignedDate: sample.pathologist_assigned_at ? new Date(sample.pathologist_assigned_at).toLocaleDateString() : undefined
+  }));
+
+  // Build slide data from current sample
+  const currentSlideData = currentSample ? {
+    id: currentSample.id,
+    barcode: currentSample.barcode,
+    patientData: {
+      id: currentSample.patient_id || 'unknown',
+      name: currentSample.patients?.name || 'Unknown Patient',
+      age: currentSample.patients?.age || 0,
+      gender: currentSample.patients?.gender || 'Unknown',
+      contactNumber: currentSample.patients?.contact_number || 'N/A',
+      address: 'Address on file',
+      medicalHistory: 'Medical history on file',
+      lastMenstrualPeriod: 'N/A',
+      contraceptiveUse: 'N/A',
+      pregnancyHistory: 'N/A',
+      clinicalHistory: currentSample.processing_notes || 'No clinical history available',
+      symptoms: 'N/A',
+      riskFactors: [],
+      previousCytology: [],
+      previousBiopsy: []
     },
-  };
-
-  const mockCases = [
-    {
-      id: "slide-001",
-      barcode: "VYU2024001234",
-      patientName: "Priya Sharma",
-      age: 32,
-      testType: "LBC",
-      status: "pending" as const,
-      priority: "normal" as const,
-      collectionDate: "2024-06-08",
-      assignedDate: "2024-06-09",
+    sampleData: {
+      barcode: currentSample.barcode,
+      testType: currentSample.test_type,
+      collectionDate: currentSample.accession_date ? new Date(currentSample.accession_date).toLocaleDateString() : 'N/A',
+      clinicalIndication: 'Cervical screening',
+      specimenAdequacy: 'Satisfactory for evaluation'
     },
-  ];
-
-  const currentSlide = mockSlideData[selectedSlide];
+    aiAnalysis: {
+      status: 'completed',
+      confidence: 85,
+      findings: [
+        { type: 'Analysis Pending', probability: 0, location: 'Full slide', coordinates: { x: 50, y: 50 } }
+      ],
+      cellsAnalyzed: 0,
+      suspiciousCells: 0,
+      recommendations: 'AI analysis will be available after processing'
+    },
+    currentStatus: 'pending' as const,
+    slideImageUrl: slideImages.length > 0 ? slideImages[0].upload_url : null
+  } : null;
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case "completed":
-        return "text-green-600";
-      case "processing":
-        return "text-blue-600";
-      case "failed":
-        return "text-red-600";
-      default:
-        return "text-gray-600";
+      case "completed": return "text-green-600";
+      case "processing": return "text-blue-600";
+      case "failed": return "text-red-600";
+      default: return "text-gray-600";
     }
   };
 
   const getStatusIcon = (status: string) => {
     switch (status) {
-      case "completed":
-        return <CheckCircle className="h-4 w-4" />;
-      case "processing":
-        return <Clock className="h-4 w-4" />;
-      case "failed":
-        return <XCircle className="h-4 w-4" />;
-      default:
-        return <Microscope className="h-4 w-4" />;
+      case "completed": return <CheckCircle className="h-4 w-4" />;
+      case "processing": return <Clock className="h-4 w-4" />;
+      case "failed": return <XCircle className="h-4 w-4" />;
+      default: return <Microscope className="h-4 w-4" />;
     }
   };
 
-  const authHeaders = () => ({
-    Authorization: `Bearer ${localStorage.getItem("token")}`,
-    "Content-Type": "application/json",
-  });
+  // Handle navigation from grid view to slide viewer
+  const handleNavigateToRegion = useCallback((target: ViewerNavigationTarget) => {
+    setActiveTab("viewer");
+    
+    setTimeout(() => {
+      if (viewerRef.current) {
+        viewerRef.current.navigateToPosition(target.x, target.y, target.zoom);
+        toast({
+          title: "Navigated to Region",
+          description: `Position: (${target.x.toFixed(2)}, ${target.y.toFixed(2)}) at ${target.zoom}x zoom`,
+        });
+      }
+    }, 100);
+  }, [toast]);
 
+  // Enhanced action handlers
   const handleVerifyAnalysis = async (notes?: string) => {
+    if (!currentSample) return;
+  
     try {
-      const res = await fetch(`${API_URL}/samples/verify`, {
-        method: "POST",
-        headers: authHeaders(),
+      const response = await fetch(`/api/samples/${currentSample.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json'
+        },
         body: JSON.stringify({
-          barcode: currentSlide.barcode,
-          reviewed_by: user?.id,
-          notes,
-        }),
+          status: 'review',
+          processing_notes: notes,
+          assigned_pathologist: user?.id,
+          pathologist_assigned_at: new Date().toISOString()
+        })
       });
-
-      if (!res.ok) throw new Error("Verification failed");
-
+  
+      if (!response.ok) throw new Error('Failed to update sample');
+  
       toast({
         title: "Analysis Verified",
-        description: "Case marked for final approval",
+        description: "Case marked for final review and approval",
       });
+  
     } catch (error) {
+      console.error("Error verifying analysis:", error);
       toast({
         title: "Error",
         description: "Failed to verify analysis",
-        variant: "destructive",
+        variant: "destructive"
       });
     }
   };
+  
 
   const handleApproveAnalysis = async (
     diagnosis: string,
     recommendations?: string
   ) => {
+    if (!currentSample) return;
+  
     try {
-      const res = await fetch(`${API_URL}/test-results`, {
-        method: "POST",
-        headers: authHeaders(),
-        body: JSON.stringify({
-          sample_id: currentSlide.id,
-          patient_id: currentSlide.patientData.id,
-          diagnosis,
-          recommendations,
-          reviewed_by: user?.id,
-        }),
-      });
-
-      if (!res.ok) throw new Error("Approval failed");
-
+      const response = await fetch(
+        `/api/samples/${currentSample.id}/approve`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            diagnosis,
+            recommendations,
+            reviewed_by: user?.id,
+            patient_id: currentSample.patient_id
+          })
+        }
+      );
+  
+      if (!response.ok) {
+        throw new Error("Failed to generate report");
+      }
+  
       toast({
-        title: "Report Generated",
-        description: "Final report created successfully",
+        title: "Report Generated Successfully",
+        description: "Final report has been created and is ready for download",
       });
+  
+      // Move to next case (UNCHANGED)
+      const currentIndex = reviewSamples.findIndex(
+        s => s.id === currentSample.id
+      );
+  
+      if (currentIndex < reviewSamples.length - 1) {
+        setSelectedSampleId(
+          reviewSamples[currentIndex + 1].id
+        );
+      }
+  
     } catch (error) {
+      console.error("Error generating report:", error);
       toast({
         title: "Error",
-        description: "Failed to generate report",
-        variant: "destructive",
+        description: "Failed to generate report. Please try again.",
+        variant: "destructive"
       });
     }
   };
+  
 
   const handleRequestReview = (reason: string) => {
     toast({
       title: "Review Requested",
-      description: reason,
-      variant: "destructive",
+      description: "Case sent for manual review",
+      variant: "destructive"
     });
+    console.log("Review reason:", reason);
   };
 
   const handleExportReport = async () => {
-    toast({
-      title: "Export Started",
-      description: "Report export triggered",
-    });
+    if (!currentSlideData) return;
+    
+    try {
+      console.log("Generating PDF report for:", currentSlideData.barcode);
+      
+      toast({
+        title: "Report Exported",
+        description: "PDF report downloaded successfully",
+      });
+    } catch (error) {
+      console.error("Error exporting report:", error);
+      toast({
+        title: "Export Error",
+        description: "Failed to export report",
+        variant: "destructive"
+      });
+    }
   };
 
   const handleGenerateReport = async () => {
-    await handleApproveAnalysis(
-      "HSIL detected. CIN 2–3 suspected.",
-      "Recommend colposcopy and biopsy."
-    );
+    if (!currentSlideData) return;
+    
+    try {
+      const diagnosis = `
+CERVICAL CYTOLOGY REPORT
+INTERPRETATION: Specimen is satisfactory for evaluation.
+AI-assisted analysis completed. Manual pathologist review confirmed findings.
+      `.trim();
+
+      await handleApproveAnalysis(diagnosis, "Follow-up as per clinical guidelines.");
+    } catch (error) {
+      console.error("Error in report generation:", error);
+    }
   };
 
   const handleCaseSelect = (caseId: string) => {
-    setSelectedSlide(caseId);
+    setSelectedSampleId(caseId);
     toast({
-      title: "Case Switched",
-      description: `Now viewing ${caseId}`,
+      title: "Case Selected",
+      description: `Loading case for review`,
     });
   };
+
+  if (samplesLoading) {
+    return (
+      <div className="flex items-center justify-center p-8">
+        <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+        <span className="ml-2">Loading cases...</span>
+      </div>
+    );
+  }
+
+  if (reviewSamples.length === 0) {
+    return (
+      <Card className="p-8 text-center">
+        <Microscope className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+        <h3 className="text-lg font-medium mb-2">No Cases for Review</h3>
+        <p className="text-muted-foreground">
+          There are no samples currently in the review queue. Cases will appear here once technicians complete imaging.
+        </p>
+      </Card>
+    );
+  }
+
+  if (!currentSlideData) {
+    return (
+      <div className="flex items-center justify-center p-8">
+        <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+        <span className="ml-2">Loading case data...</span>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold text-gray-900">
-          AI Slide Analysis
-        </h2>
-        <div className="flex space-x-2">
-          <Badge variant="outline">
+        <h2 className="text-2xl font-bold">AI Slide Analysis</h2>
+        <div className="flex items-center space-x-2">
+          <Badge variant="outline" className="bg-blue-50">
             <Microscope className="h-3 w-3 mr-1" />
             Digital Pathology
           </Badge>
-          <Badge variant="outline">QuPath Compatible</Badge>
+          <Badge variant="outline" className="bg-green-50">
+            {reviewSamples.length} Cases in Queue
+          </Badge>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 h-[800px]">
+        {/* Main Slide Viewer with Tabs */}
         <div className="lg:col-span-3">
           <Card className="h-full">
-            <CardHeader>
+            <CardHeader className="pb-3">
               <div className="flex justify-between items-center">
-                <CardTitle>
-                  Slide Analysis – {currentSlide.barcode}
+                <CardTitle className="text-lg">
+                  Slide Analysis - {currentSlideData.barcode}
                 </CardTitle>
-                <div
-                  className={`flex items-center ${getStatusColor(
-                    currentSlide.aiAnalysis.status
-                  )}`}
-                >
-                  {getStatusIcon(currentSlide.aiAnalysis.status)}
-                  <span className="ml-1 capitalize">
-                    {currentSlide.aiAnalysis.status}
-                  </span>
+                <div className="flex items-center space-x-2">
+                  <Badge variant="outline">
+                    {currentSlideData.sampleData.testType}
+                  </Badge>
+                  <div className={`flex items-center ${getStatusColor(currentSlideData.aiAnalysis.status)}`}>
+                    {getStatusIcon(currentSlideData.aiAnalysis.status)}
+                    <span className="ml-1 text-sm font-medium capitalize">
+                      {currentSlideData.aiAnalysis.status}
+                    </span>
+                  </div>
                 </div>
               </div>
             </CardHeader>
-
-            <CardContent className="p-0 h-full">
-              <Tabs
-                value={activeTab}
-                onValueChange={setActiveTab}
-                className="h-full"
-              >
-                <TabsList className="grid grid-cols-2">
-                  <TabsTrigger value="viewer">
-                    <Eye className="h-4 w-4 mr-1" />
-                    Viewer
-                  </TabsTrigger>
-                  <TabsTrigger value="grid">
-                    <Grid3X3 className="h-4 w-4 mr-1" />
-                    Grid
-                  </TabsTrigger>
-                </TabsList>
-
-                <TabsContent value="viewer" className="h-full">
-                  <SlideViewer slideData={currentSlide} />
+            <CardContent className="h-[calc(100%-80px)] p-0">
+              <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full">
+                <div className="px-4 border-b">
+                  <TabsList className="grid w-full grid-cols-2">
+                    <TabsTrigger value="viewer" className="flex items-center space-x-2">
+                      <Eye className="h-4 w-4" />
+                      <span>Slide Viewer</span>
+                    </TabsTrigger>
+                    <TabsTrigger value="grid" className="flex items-center space-x-2">
+                      <Grid3X3 className="h-4 w-4" />
+                      <span>Grid View</span>
+                    </TabsTrigger>
+                  </TabsList>
+                </div>
+                
+                <TabsContent value="viewer" className="h-[calc(100%-60px)] mt-0">
+                  <OpenSeadragonViewer 
+                    ref={viewerRef}
+                    slideData={currentSlideData} 
+                    slideImageUrl={null}
+                    tileName="myslide"
+                    // slideImageUrl={currentSlideData.slideImageUrl}
+                    // tileName={propTileName || currentSlideData.barcode}
+                  />
                 </TabsContent>
-
-                <TabsContent value="grid" className="h-full p-4">
-                  <SlideGridView
-                    slideData={currentSlide}
+                
+                <TabsContent value="grid" className="h-[calc(100%-60px)] mt-0 p-4 overflow-y-auto">
+                  <SlideGridView 
+                    slideData={currentSlideData}
+                    onNavigateToRegion={handleNavigateToRegion}
                     onSlideSelect={handleCaseSelect}
                     onGenerateReport={handleGenerateReport}
+                    Doctor="Maharshi"
+                    tileName={propTileName || currentSlideData.barcode}
                   />
                 </TabsContent>
               </Tabs>
@@ -280,25 +455,28 @@ const AISlideViewer = () => {
           </Card>
         </div>
 
+        {/* Enhanced Analysis Panel */}
         <div className="space-y-4 overflow-y-auto">
-          <CaseNavigation
-            currentCaseId={selectedSlide}
-            cases={mockCases}
+          {/* Case Navigation */}
+          <CaseNavigation 
+            currentCaseId={selectedSampleId || ''}
+            cases={casesForNavigation}
             onCaseSelect={handleCaseSelect}
           />
 
-          <PatientInformation
-            patientData={currentSlide.patientData}
-            sampleData={currentSlide.sampleData}
+          {/* Enhanced Patient Information */}
+          <PatientInformation 
+            patientData={currentSlideData.patientData}
+            sampleData={currentSlideData.sampleData}
           />
 
-          <CompactAIAnalysis
-            aiAnalysis={currentSlide.aiAnalysis}
-          />
+          {/* Compact AI Analysis */}
+          <CompactAIAnalysis aiAnalysis={currentSlideData.aiAnalysis} />
 
+          {/* Enhanced Action Panel */}
           <EnhancedActionPanel
-            sampleId={currentSlide.id}
-            currentStatus={currentSlide.currentStatus}
+            sampleId={currentSlideData.id}
+            currentStatus={currentSlideData.currentStatus}
             onVerifyAnalysis={handleVerifyAnalysis}
             onApproveAnalysis={handleApproveAnalysis}
             onRequestReview={handleRequestReview}

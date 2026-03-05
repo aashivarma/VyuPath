@@ -2,6 +2,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import OpenSeadragon from "openseadragon";
 import { 
   ZoomIn, 
   ZoomOut, 
@@ -18,7 +19,7 @@ interface SlideViewerProps {
   slideData: any;
   onAnnotationChange?: (annotations: any[]) => void;
 }
-
+console.log("SlideViewer mounted");
 const SlideViewer = ({ slideData, onAnnotationChange }: SlideViewerProps) => {
   const [zoomLevel, setZoomLevel] = useState(100);
   const [position, setPosition] = useState({ x: 0, y: 0 });
@@ -30,24 +31,56 @@ const SlideViewer = ({ slideData, onAnnotationChange }: SlideViewerProps) => {
   const imageRef = useRef<HTMLDivElement>(null);
 
   const zoomLevels = [25, 50, 75, 100, 150, 200, 300, 400, 600, 800, 1200, 1600];
+  const osdInstance = useRef<any>(null);
+  const viewerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!viewerRef.current) return;
   
+    console.log("Initializing OSD...");
+  
+    osdInstance.current = OpenSeadragon({
+      element: viewerRef.current,
+      prefixUrl: "https://openseadragon.github.io/openseadragon/images/",
+      showNavigator: true,
+      tileSources: {
+        width: 1,
+        height: 1,
+        tileSize: 512,
+        minLevel: 0,
+        maxLevel: 9,
+        getTileUrl: function (level: number, x: number, y: number) {
+          const url = `http://localhost:8000/api/fastapi/tile/Maharshi/myslide/${level}/${y}_${x}.jpeg`;
+          console.log("Requesting:", url);
+          return url;
+        }
+      }
+    });
+  
+    return () => {
+      if (osdInstance.current) {
+        osdInstance.current.destroy();
+      }
+    };
+  }, []);
+  
+
   const handleZoomIn = () => {
-    const currentIndex = zoomLevels.indexOf(zoomLevel);
-    if (currentIndex < zoomLevels.length - 1) {
-      setZoomLevel(zoomLevels[currentIndex + 1]);
+    if (osdInstance.current) {
+      osdInstance.current.viewport.zoomBy(1.2);
+      osdInstance.current.viewport.applyConstraints();
     }
   };
-
   const handleZoomOut = () => {
-    const currentIndex = zoomLevels.indexOf(zoomLevel);
-    if (currentIndex > 0) {
-      setZoomLevel(zoomLevels[currentIndex - 1]);
+    if (osdInstance.current) {
+      osdInstance.current.viewport.zoomBy(0.8);
+      osdInstance.current.viewport.applyConstraints();
     }
   };
-
   const handleZoomFit = () => {
-    setZoomLevel(100);
-    setPosition({ x: 0, y: 0 });
+    if (osdInstance.current) {
+      osdInstance.current.viewport.goHome();
+    }
   };
 
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -169,109 +202,17 @@ const SlideViewer = ({ slideData, onAnnotationChange }: SlideViewerProps) => {
       </div>
 
       {/* Viewer Area */}
-      <div 
+      <div
         ref={containerRef}
-        className="flex-1 relative overflow-hidden bg-gray-900 cursor-crosshair"
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onWheel={handleWheel}
-        style={{ cursor: tool === 'move' ? 'grab' : 'crosshair' }}
+        className="flex-1 relative bg-gray-900"
       >
         <div
-          ref={imageRef}
-          className="absolute inset-0 transition-transform duration-200 ease-out"
-          style={{
-            transform: `translate(${position.x}px, ${position.y}px) scale(${zoomLevel / 100})`,
-            transformOrigin: 'center center'
-          }}
-        >
-          {/* Actual Slide Image Background */}
-          <div 
-            className="w-full h-full relative bg-center bg-no-repeat bg-contain"
-            style={{
-              backgroundImage: `url('/lovable-uploads/f07723c3-179d-4293-b0ed-55e8945aa47f.png')`,
-              minHeight: '100%',
-              minWidth: '100%'
-            }}
-          >
-            {/* Grid overlay for high zoom levels */}
-            {zoomLevel > 200 && (
-              <div 
-                className="absolute inset-0 opacity-20"
-                style={{
-                  backgroundImage: `
-                    linear-gradient(to right, #ccc 1px, transparent 1px),
-                    linear-gradient(to bottom, #ccc 1px, transparent 1px)
-                  `,
-                  backgroundSize: '20px 20px'
-                }}
-              />
-            )}
+          ref={viewerRef}
+          className="w-full h-full"
+        />
 
-            {/* Detected regions */}
-            {slideRegions.map((region) => (
-              <div
-                key={region.id}
-                className={`absolute border-2 ${getRegionColor(region.type)} cursor-pointer`}
-                style={{
-                  left: `${region.x}%`,
-                  top: `${region.y}%`,
-                  width: `${region.width}px`,
-                  height: `${region.height}px`,
-                }}
-                title={`${region.type} - ${region.cells}`}
-              >
-                {zoomLevel > 150 && (
-                  <div className="absolute -top-6 left-0 text-xs bg-black text-white px-1 rounded">
-                    {region.cells}
-                  </div>
-                )}
-              </div>
-            ))}
-
-            {/* AI Detection overlays */}
-            <div className="absolute top-4 left-4 w-12 h-12 border-4 border-red-500 bg-red-500/20 rounded-full animate-pulse">
-              {zoomLevel > 200 && (
-                <div className="absolute -bottom-8 left-1/2 transform -translate-x-1/2 text-xs bg-red-500 text-white px-2 py-1 rounded whitespace-nowrap">
-                  HSIL Detection (92%)
-                </div>
-              )}
-            </div>
-            
-            <div className="absolute top-20 right-12 w-8 h-8 border-3 border-yellow-500 bg-yellow-500/20 rounded-full">
-              {zoomLevel > 200 && (
-                <div className="absolute -bottom-8 left-1/2 transform -translate-x-1/2 text-xs bg-yellow-500 text-white px-2 py-1 rounded whitespace-nowrap">
-                  LSIL (78%)
-                </div>
-              )}
-            </div>
-            
-            <div className="absolute bottom-12 left-16 w-16 h-16 border-3 border-orange-500 bg-orange-500/20 rounded-full animate-pulse">
-              {zoomLevel > 200 && (
-                <div className="absolute -bottom-8 left-1/2 transform -translate-x-1/2 text-xs bg-orange-500 text-white px-2 py-1 rounded whitespace-nowrap">
-                  Inflammation
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Coordinates and info overlay */}
-        <div className="absolute bottom-2 left-2 bg-black bg-opacity-75 text-white text-xs px-2 py-1 rounded">
-          Zoom: {zoomLevel}% | Position: ({Math.round(position.x)}, {Math.round(position.y)}) | Tool: {tool}
-        </div>
-
-        {/* Scale bar */}
-        {zoomLevel > 100 && (
-          <div className="absolute bottom-2 right-2 bg-black bg-opacity-75 text-white text-xs px-2 py-1 rounded">
-            <div className="flex items-center space-x-2">
-              <div className="w-8 h-1 bg-white"></div>
-              <span>{Math.round(100 / (zoomLevel / 100))}μm</span>
-            </div>
-          </div>
-        )}
       </div>
+
 
       {/* Status bar */}
       <div className="flex items-center justify-between p-2 bg-gray-50 border-t text-sm">

@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+python-multipart
+python-jose
+openslide-python
+Pillow
+numpy
+opencv-python
+python-dotenv

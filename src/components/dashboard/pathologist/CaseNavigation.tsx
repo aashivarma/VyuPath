@@ -37,12 +37,14 @@ const CaseNavigation = ({ currentCaseId, cases, onCaseSelect }: CaseNavigationPr
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "pending" | "verified" | "approved">("all");
 
+  console.log(cases)
   const filteredCases = cases.filter(case_ => {
     const matchesSearch = case_.barcode.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          case_.patientName.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStatus = statusFilter === "all" || case_.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
+  
 
   const pendingCount = cases.filter(c => c.status === "pending").length;
   const verifiedCount = cases.filter(c => c.status === "verified").length;

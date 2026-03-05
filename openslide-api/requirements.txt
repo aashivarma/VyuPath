@@ -1,0 +1,6 @@
+flask
+flask-cors
+openslide-python
+Pillow
+numpy
+opencv-python
